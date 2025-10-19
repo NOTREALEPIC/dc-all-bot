@@ -781,31 +781,61 @@ async def on_member_update(before, after):
             user_activity[after.id]["got_role"] = True
 
 @bot.event
-async def on_member_remove(member):
+async def on_member_remove(member: discord.Member):
     activity = user_activity.get(member.id)
     if not activity:
         return
 
-    if activity["got_role"]:
-        time_spent = datetime.utcnow() - activity["joined"]
-        if time_spent < timedelta(minutes=TIME_LIMIT_MINUTES):
-            try:
-                # Ban for 30 days
-                await member.ban(reason="Accessed file and left within short time.", delete_message_days=0)
+    # Store the user's ID and name now, as the member object will become less useful
+    user_id = member.id
+    user_name = str(member)
 
-                # Send DM
+    try:
+        if activity["got_role"]:
+            # Use timezone-aware datetime for more accurate comparisons
+            time_spent = datetime.now(timezone.utc) - activity["joined"]
+
+            if time_spent < timedelta(minutes=TIME_LIMIT_MINUTES):
+                # --- BAN LOGIC ---
                 try:
-                    await member.send(
-                                "<a:lightning:1369441281264189601> {user}, welcome to the NOTTHEREALEPIC Discord server.\n\n"
-                                "<a:animetedrule:1234044425496428545> Read the rules and verify to get the LEGIT <a:animetedverify:1234049755844448329> role.\n\n"
-                                "https://cdn.discordapp.com/attachments/1233831270866227271/1379393664962527292/nre_animated_low_mb.gif?ex=6842b6f5&is=68416575&hm=74ad849bb664592ec36bc71b9b8ebfed5b030cd6b9d14d18fe629c50ad6fbd58&"
-                            )
-                except:
-                    print(f"Could not DM {member}")
-            except:
-                print(f"Could not ban {member}")
-    # Cleanup
-    user_activity.pop(member.id, None)
+                    await member.guild.ban(
+                        discord.Object(id=user_id), # Use discord.Object for reliability
+                        reason="Auto-ban: Accessed a protected role and left the server shortly after.",
+                        delete_message_days=0
+                    )
+                    print(f"Successfully banned {user_name} ({user_id}).")
+                except discord.Forbidden:
+                    print(f"Could not ban {user_name} ({user_id}). Bot lacks 'Ban Members' permission.")
+                    return # Can't continue if ban fails
+                except Exception as e:
+                    print(f"An unexpected error occurred while trying to ban {user_name}: {e}")
+                    return
+
+                # --- DM LOGIC (The Fix) ---
+                try:
+                    # Fetch the global User object using the ID
+                    user = await bot.fetch_user(user_id)
+
+                    # Send a clear ban notification, not a welcome message
+                    await user.send(
+                        f"Hello {user.name},\n\n"
+                        "You have been automatically banned from the **NOTTHEREALEPIC** Discord server. "
+                        "Our system detected that you joined, gained a specific role, and left within a very short time frame. "
+                        "This action is a security measure to prevent potential abuse.\n\n"
+                        "If you believe this was a mistake, you can appeal by contacting the server owner."
+                    )
+                    print(f"Successfully sent a ban notification DM to {user_name} ({user_id}).")
+                except discord.Forbidden:
+                    # This is common if the user has DMs disabled or blocked the bot.
+                    print(f"Could not DM {user_name} ({user_id}). They may have DMs disabled.")
+                except Exception as e:
+                    print(f"An unexpected error occurred while trying to DM {user_name}: {e}")
+    finally:
+        # --- CLEANUP ---
+        # This cleanup should happen regardless of the outcome to prevent memory leaks.
+        # The 'finally' block ensures this code always runs.
+        user_activity.pop(user_id, None)
+        print(f"Cleaned up activity tracking for {user_name} ({user_id}).")
 
 
 
